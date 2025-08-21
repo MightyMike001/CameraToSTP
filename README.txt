@@ -1,10 +1,9 @@
 Deploy-instructies (Netlify Drop of GitHub Pages)
 
-1) Netlify Drop (snelste manier, HTTPS):
-   - Ga naar https://app.netlify.com/drop
-   - Sleep deze zip of de map met 'index.html' erin naar het venster
-   - Je krijgt direct een https://...netlify.app link
-   - Open die link in Safari op iPhone
+# CameraToSTP
+
+[▶️ Open de website](https://mightymike001.github.io/CameraToSTP/)
+
 
 2) GitHub Pages:
    - Nieuwe repo aanmaken

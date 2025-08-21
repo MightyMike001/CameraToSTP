@@ -2,7 +2,10 @@ Deploy-instructies (Netlify Drop of GitHub Pages)
 
 # CameraToSTP
 
-[▶️ Open de website](https://mightymike001.github.io/CameraToSTP/)
+Klik hieronder om de live site te openen:
+
+[![Open Website](https://img.shields.io/badge/Open-Website-green?style=for-the-badge)](https://mightymike001.github.io/CameraToSTP/)
+
 
 <a href="https://mightymike001.github.io/CameraToSTP/" target="_blank">
   <img src="https://img.shields.io/badge/Open-Website-green?style=for-the-badge" />

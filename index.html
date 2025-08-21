@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Object → STEP (Demo) v4 (iOS-hardened)</title>
+  <style>
+    :root { --bg:#0b0d12; --fg:#e9eef5; --muted:#8691a3; --accent:#4fa3ff; }
+    html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    header { padding: 12px 16px; border-bottom: 1px solid #1a1f2b; background: #0f1320; position: sticky; top: 0; z-index: 50; }
+    header h1 { margin:0; font-size: 18px; }
+    #app { display:flex; flex-direction: column; height:100%; }
+    .grid { display:grid; gap:12px; grid-template-columns: 1fr; padding:12px; }
+    .card { background:#111628; border:1px solid #1c2334; border-radius:12px; padding:12px; position: relative; z-index: 10; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    button, input, select { background:#0f1526; color:var(--fg); border:1px solid #24314d; padding:10px 12px; border-radius:10px; cursor:pointer; }
+    button.primary { background: var(--accent); color: #021425; border-color: #4fa3ff; }
+    button:disabled { opacity:0.5; cursor: not-allowed; }
+    label { font-size:13px; color: var(--muted); }
+    .kv { display:grid; grid-template-columns: 130px 1fr; gap:8px 12px; align-items:center; }
+    .hint { color: var(--muted); font-size:12px; }
+    .status { font-variant-numeric: tabular-nums; }
+    #stage { position:relative; width:100%; aspect-ratio: 9/16; background:black; border-radius:12px; overflow:hidden; border:1px solid #1a2134; z-index: 1; }
+    #video, #overlay, #canvas { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; touch-action: manipulation; }
+    #overlay { mix-blend-mode: screen; pointer-events: none; }
+    footer { padding:12px; color: var(--muted); font-size: 12px; text-align:center; }
+    .small { font-size:12px; }
+    @media (min-width:900px) {
+      .grid { grid-template-columns: 1.3fr 0.7fr; }
+      #stage { aspect-ratio: 16/10; }
+    }
+    .warn { background: #2a1a1a; border:1px solid #5a2a2a; padding:10px; border-radius:10px; }
+    .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; background:#0f1526; border:1px solid #24314d; padding:10px 12px; border-radius:10px; z-index: 100; color: var(--fg); }
+  </style>
+  <!-- cache-bust OpenCV to avoid stale/corrupt cache on iOS -->
+  <script>
+    (function(){
+      var s=document.createElement('script');
+      s.src="https://docs.opencv.org/4.x/opencv.js?v="+Date.now();
+      s.async=true;
+      document.head.appendChild(s);
+    })();
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+<div id="app">
+  <header><h1>Object → STEP (Web Demo) v4</h1></header>
+  <div class="grid">
+    <div class="card">
+      <div id="secureWarn" class="warn" style="display:none;">
+        iOS Safari vereist <b>HTTPS</b> of <b>localhost</b> voor camera-toegang. Host dit bestand via HTTPS.
+      </div>
+      <div id="stage">
+        <video id="video" playsinline muted></video>
+        <canvas id="canvas"></canvas>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <button id="btnStart" class="primary">Camera starten</button>
+        <button id="btnEdges" disabled>Randen aan</button>
+        <button id="btnSnap" disabled>Snapshot</button>
+        <button id="btnMakeSTEP" disabled>Maak STEP (demo)</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnExportZip" disabled>Exporteer pakket (.zip)</button>
+        <button id="btnReinitCV">Herlaad OpenCV</button>
+        <button id="btnReinitCam">Herstart camera</button>
+        <span class="hint status" id="status">Status: Idle</span>
+      </div>
+      <div class="hint" style="margin-top:8px;">
+        iPhone: Instellingen → Safari → Geavanceerd → Website-instellingen → Camera: <b>Toestaan</b>. Low Power Mode kan performance beperken.
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0;">Instellingen</h3>
+      <div class="kv">
+        <label for="selFacing">Camera</label>
+        <select id="selFacing">
+          <option value="environment">Achterkant</option>
+          <option value="user">Voorkant</option>
+        </select>
+        <label for="rngCanny">Canny drempel</label>
+        <input id="rngCanny" type="range" min="10" max="200" value="80">
+        <label class="small">Tip</label>
+        <div class="hint">“Maak STEP (demo)” maakt een eenvoudige polyline-STEP (2D). Voor echte 3D STEP is serverconversie nodig.</div>
+      </div>
+    </div>
+  </div>
+  <footer>Werkt in Safari/Chrome op iPhone via <b>HTTPS</b>. OpenCV.js vereist internet.</footer>
+</div>
+
+<div id="toast" class="toast" style="display:none;"></div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const overlay = document.getElementById('overlay');
+const btnStart = document.getElementById('btnStart');
+const btnEdges = document.getElementById('btnEdges');
+const btnSnap = document.getElementById('btnSnap');
+const btnMakeSTEP = document.getElementById('btnMakeSTEP');
+const btnExportZip = document.getElementById('btnExportZip');
+const btnReinitCV = document.getElementById('btnReinitCV');
+const btnReinitCam = document.getElementById('btnReinitCam');
+const selFacing = document.getElementById('selFacing');
+const rngCanny = document.getElementById('rngCanny');
+const statusEl = document.getElementById('status');
+const secureWarn = document.getElementById('secureWarn');
+const toast = document.getElementById('toast');
+
+if (!window.isSecureContext) { secureWarn.style.display = 'block'; }
+
+let stream = null, edgeOn = false, processing = false, cvReady = false, snapshots = [];
+
+function setStatus(s){ statusEl.textContent = "Status: " + s; showToast(s); }
+function showToast(msg){ toast.textContent = msg; toast.style.display = 'block'; clearTimeout(showToast._t); showToast._t = setTimeout(()=> toast.style.display='none', 1600); }
+function resizeCanvases() {
+  const rect = overlay.getBoundingClientRect();
+  const w = rect.width || 720;
+  const h = rect.height || 1280;
+  for (const c of [canvas, overlay]) { c.width = Math.floor(w); c.height = Math.floor(h); }
+}
+window.addEventListener('resize', resizeCanvases);
+document.addEventListener('visibilitychange', ()=>{
+  if (document.hidden) stopCamera();
+});
+
+window.addEventListener('pagehide', ()=>{ stopCamera(); });
+
+function stopCamera(){
+  if (stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+  btnStart.textContent = "Camera starten";
+  btnEdges.disabled = true; btnSnap.disabled = true; btnMakeSTEP.disabled = true;
+  setStatus("Camera gestopt");
+}
+
+async function startCamera(){
+  try{
+    stopCamera();
+    setStatus("Start camera…");
+    let constraints = {
+      video: { facingMode: { ideal: selFacing.value }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    };
+    const md = navigator.mediaDevices;
+    if (!md || !md.getUserMedia){ setStatus("getUserMedia niet beschikbaar (HTTPS/perm?)"); alert("Camera API niet beschikbaar. Draait de pagina via HTTPS?"); return; }
+    try{
+      stream = await md.getUserMedia(constraints);
+    }catch(err){
+      // fallback zonder facingMode
+      console.warn("FacingMode faalde, fallback naar standaard camera.", err);
+      constraints = { video: true, audio: false };
+      stream = await md.getUserMedia(constraints);
+    }
+    video.srcObject = stream;
+    // robust play sequence
+    try { await video.play(); }
+    catch(e){ try { video.load(); await video.play(); } catch(e2){ console.warn("video.play fallback faalde", e2); } }
+    resizeCanvases();
+    btnStart.textContent = "Camera stoppen";
+    btnEdges.disabled = false; btnSnap.disabled = false; btnMakeSTEP.disabled = false;
+    setStatus("Camera actief");
+  }catch(e){ console.error(e); setStatus("Camera fout: "+e.message); alert("Camera fout: "+e.message + "\\n\\nTip: Gebruik HTTPS en sta camera toe in Safari-instellingen."); }
+}
+
+function bindTap(el, handler){
+  const safe = (e)=>{ e.preventDefault(); e.stopPropagation(); handler(e); };
+  el.addEventListener('click', safe, {passive:false});
+  el.addEventListener('touchend', safe, {passive:false});
+}
+bindTap(btnStart, ()=>{ if (stream) stopCamera(); else startCamera(); });
+bindTap(btnReinitCam, ()=> startCamera() );
+bindTap(btnReinitCV, ()=> reloadOpenCV() );
+
+async function loopEdges(){
+  if (!edgeOn) return;
+  if (!cvReady){ setStatus("OpenCV laden…"); requestAnimationFrame(loopEdges); return; }
+  if (!stream){ edgeOn=false; return; }
+  if (processing){ requestAnimationFrame(loopEdges); return; }
+  processing = true;
+  try{
+    const ctx = canvas.getContext('2d'); ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const src = cv.imread(canvas);
+    let gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(5,5), 1.2, 1.2, cv.BORDER_DEFAULT);
+    const edges = new cv.Mat();
+    const thr = parseInt(rngCanny.value,10)||80;
+    cv.Canny(gray, edges, thr, thr*2);
+    const out = new cv.Mat(); cv.cvtColor(edges, out, cv.COLOR_GRAY2RGBA);
+    cv.imshow(overlay, out);
+    src.delete(); gray.delete(); edges.delete(); out.delete();
+    setStatus("Randen actief (thr="+thr+")");
+  }catch(e){ console.error(e); setStatus("Edge error: "+e.message); }
+  finally{ processing=false; requestAnimationFrame(loopEdges); }
+}
+bindTap(btnEdges, ()=>{ edgeOn = !edgeOn; btnEdges.textContent = edgeOn ? "Randen uit":"Randen aan"; if (edgeOn) loopEdges(); else overlay.getContext('2d').clearRect(0,0,overlay.width, overlay.height); });
+bindTap(btnSnap, async ()=>{
+  if (!stream) return;
+  const ctx = canvas.getContext('2d'); ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const blob = await new Promise(res=>canvas.toBlob(res,'image/png',0.92));
+  snapshots.push({ blob, w: canvas.width, h: canvas.height, ts: Date.now() });
+  btnExportZip.disabled = snapshots.length===0 ? true : false;
+  setStatus("Snapshot toegevoegd ("+snapshots.length+")");
+});
+bindTap(btnExportZip, async ()=>{
+  if (snapshots.length===0) return;
+  const zip = new JSZip();
+  const manifest = { created: new Date().toISOString(), frames: snapshots.map((s,i)=>({file:`frame_${String(i+1).padStart(3,'0')}.png`, w:s.w, h:s.h, ts:s.ts})) };
+  zip.file("manifest.json", JSON.stringify(manifest,null,2));
+  await Promise.all(snapshots.map(async (s,i)=>{ const arr = new Uint8Array(await s.blob.arrayBuffer()); zip.file(`frame_${String(i+1).padStart(3,'0')}.png`, arr); }));
+  const content = await zip.generateAsync({type:"blob"});
+  downloadBlob(content, "object_capture_package.zip", "application/zip");
+});
+bindTap(btnMakeSTEP, async ()=>{
+  setStatus("STEP genereren (demo)…");
+  const ctx = canvas.getContext('2d'); ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  if (!cvReady){ setStatus("Wacht op OpenCV…"); return; }
+  const src = cv.imread(canvas);
+  let gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.GaussianBlur(gray, gray, new cv.Size(5,5), 1.2, 1.2, cv.BORDER_DEFAULT);
+  const edges = new cv.Mat();
+  const thr = parseInt(rngCanny.value,10)||80;
+  cv.Canny(gray, edges, thr, thr*2);
+  let contours = new cv.MatVector(); let hierarchy = new cv.Mat();
+  cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  let bestIdx=-1, bestLen=0;
+  for (let i=0;i<contours.size();i++){ const cnt=contours.get(i); const len=cv.arcLength(cnt,true); if (len>bestLen){bestLen=len; bestIdx=i;} cnt.delete();}
+  let pts=[];
+  if (bestIdx>=0){ const cnt=contours.get(bestIdx); const approx=new cv.Mat(); cv.approxPolyDP(cnt, approx, 3, true);
+    for (let r=0;r<approx.rows;r++){ const x=approx.intAt(r,0); const y=approx.intAt(r,1); pts.push([(x*0.25).toFixed(3),(y*0.25).toFixed(3),"0.000"]);}
+    approx.delete(); cnt.delete();
+  }
+  src.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+  const step = buildDemoSTEPfromPolyline(pts);
+  const blob = new Blob([step], {type:"application/step"});
+  downloadBlob(blob, "demo_edges.polyline.stp", "application/step");
+  setStatus("STEP (demo) gedownload");
+});
+
+function downloadBlob(blob, filename){ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
+function buildDemoSTEPfromPolyline(pts){
+  const header=`ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('DEMO POLYLINE FROM EDGES'), '2;1');
+FILE_NAME('demo_edges','${new Date().toISOString()}',('web-demo'),('web-demo'),'','', '');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN_CC2'));
+ENDSEC;
+DATA;
+`;
+  if (!pts || pts.length<2){ return header + `#1 = GEOMETRIC_REPRESENTATION_CONTEXT(3);
+ENDSEC;
+END-ISO-10303-21;`; }
+  let lines=[], ids=[], id=1;
+  for (const p of pts){ ids.push(`#${id}`); lines.push(`#${id} = CARTESIAN_POINT('', (${p[0]}, ${p[1]}, ${p[2]}));`); id++; }
+  lines.push(`#${id} = POLYLINE('', (${ids.join(', ')}));`); id++;
+  lines.push(`#${id} = GEOMETRIC_REPRESENTATION_CONTEXT(3);`); id++;
+  return header + lines.join("\n") + "\nENDSEC;\nEND-ISO-10303-21;";
+}
+
+// --- OpenCV loader with retries (iOS sometimes caches a broken instance) ---
+let cvTries = 0;
+function onOpenCvReady(){ cvReady=true; setStatus("OpenCV klaar"); }
+function reloadOpenCV(){
+  cvReady=false; cvTries++;
+  setStatus("OpenCV herladen… ("+cvTries+")");
+  const s = document.createElement('script');
+  s.src = "https://docs.opencv.org/4.x/opencv.js?v="+Date.now()+"-"+cvTries;
+  s.async = true;
+  s.onload = ()=>{ if (window.cv && cv['onRuntimeInitialized']) { cv['onRuntimeInitialized']=onOpenCvReady; } };
+  document.head.appendChild(s);
+}
+// initial poll if already injected
+const iv=setInterval(()=>{ if (window.cv && window.cv.Mat){ clearInterval(iv); onOpenCvReady(); }}, 200);
+</script>
+</body>
+</html>
